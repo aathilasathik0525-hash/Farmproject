@@ -11,6 +11,60 @@ import {
 const STEPS_CUSTOMER = ['Account Info', 'Aadhaar Verify', 'Delivery Address'];
 const STEPS_FARMER = ['Account Info', 'Farm Details'];
 
+// Stable helper components defined outside parent to prevent recreation on re-renders
+const StepDot = ({ n, step, steps }) => (
+  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+    <div
+      style={{
+        width: 32,
+        height: 32,
+        borderRadius: '50%',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontWeight: 700,
+        fontSize: '0.85rem',
+        background: n < step ? 'var(--primary-600)' : n === step ? 'var(--primary-700)' : 'var(--slate-200)',
+        color: n <= step ? '#fff' : 'var(--slate-500)',
+        boxShadow: n === step ? '0 0 0 3px var(--primary-100)' : 'none',
+        transition: 'all 0.2s',
+      }}
+    >
+      {n < step ? <CheckCircle2 size={16} /> : n}
+    </div>
+    <span
+      style={{
+        fontSize: '0.65rem',
+        color: n === step ? 'var(--primary-700)' : 'var(--slate-500)',
+        fontWeight: n === step ? 700 : 400,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {steps[n - 1]}
+    </span>
+  </div>
+);
+
+const InputField = ({ label, name, type = 'text', placeholder, required, value, onChange, disabled, ...extra }) => (
+  <div className="input-group">
+    <label className="input-label">
+      {label}
+      {required && <span style={{ color: '#dc2626' }}> *</span>}
+    </label>
+    <input
+      type={type}
+      name={name}
+      required={required}
+      placeholder={placeholder}
+      value={value}
+      onChange={onChange}
+      disabled={disabled}
+      className="input-field"
+      {...extra}
+    />
+  </div>
+);
+
 export const RegisterPage = () => {
   const [role, setRole] = useState('CUSTOMER');
   const [step, setStep] = useState(1);
@@ -49,22 +103,33 @@ export const RegisterPage = () => {
   const totalSteps = steps.length;
 
   const handleChange = (e) => {
-    setFormData({ ...formData, [e.target.name]: e.target.value });
+    const { name, value } = e.target;
+    setFormData((prev) => ({ ...prev, [name]: value }));
+    setStepError('');
+  };
+
+  const handlePhoneChange = (e) => {
+    const raw = e.target.value.replace(/\D/g, '').slice(0, 10);
+    setFormData((prev) => ({ ...prev, phone: raw }));
     setStepError('');
   };
 
   const handleAadhaarChange = (e) => {
     const raw = e.target.value.replace(/\D/g, '').slice(0, 12);
-    setFormData({ ...formData, aadhaarNumber: raw });
+    setFormData((prev) => ({ ...prev, aadhaarNumber: raw }));
+    if (raw.length === 12) {
+      setOtpError('');
+    }
   };
 
   const formatAadhaarDisplay = (raw) => {
-    const d = raw.replace(/\D/g, '');
+    if (!raw) return '';
+    const d = String(raw).replace(/\D/g, '');
     const parts = [d.slice(0, 4), d.slice(4, 8), d.slice(8, 12)].filter(Boolean);
     return parts.join(' ');
   };
 
-  // Step 1 → 2 validation
+  // Step 1 -> 2 validation
   const validateStep1 = () => {
     if (!formData.name.trim()) return 'Full name is required';
     if (!formData.phone.match(/^\d{10}$/)) return 'Enter a valid 10-digit mobile number';
@@ -83,55 +148,82 @@ export const RegisterPage = () => {
       setStepError('Please complete Aadhaar OTP verification before proceeding.');
       return;
     }
-    setStep(s => s + 1);
+    setStep((s) => s + 1);
   };
 
   // Aadhaar OTP send
   const handleSendOtp = async () => {
-    setOtpError(''); setOtpMessage('');
-    if (formData.aadhaarNumber.length !== 12) {
-      setOtpError('Enter a valid 12-digit Aadhaar number'); return;
+    setOtpError('');
+    setOtpMessage('');
+    const cleanAadhaar = (formData.aadhaarNumber || '').replace(/\D/g, '');
+    if (cleanAadhaar.length !== 12) {
+      setOtpError('Aadhaar number must be exactly 12 digits.');
+      return;
     }
-    if (!formData.phone.match(/^\d{10}$/)) {
-      setOtpError('Valid 10-digit mobile is required (enter it in Step 1 first)'); return;
+    if (!formData.phone || !formData.phone.match(/^\d{10}$/)) {
+      setOtpError('Valid 10-digit mobile number is required (please check Step 1).');
+      return;
     }
     try {
       setOtpLoading(true);
-      const res = await sendAadhaarOtpApi({ aadhaarNumber: formData.aadhaarNumber, mobile: formData.phone });
-      if (res.data?.success) {
-        setTxnId(res.data.txnId);
-        setMaskedAadhaar(res.data.maskedAadhaar);
+      const res = await sendAadhaarOtpApi({
+        aadhaarNumber: cleanAadhaar,
+        mobile: formData.phone,
+      });
+      const data = res?.data || res;
+      if (data?.success) {
+        setTxnId(data.txnId);
+        setMaskedAadhaar(data.maskedAadhaar);
         setOtpStep('OTP_SENT');
-        setOtpMessage(res.data.message || 'OTP sent to your registered mobile number.');
-        if (res.data.mockOtp) setMockOtp(res.data.mockOtp);
+        setOtpMessage(data.message || 'OTP sent to your registered mobile number.');
+        if (data.mockOtp) setMockOtp(data.mockOtp);
         // Resend cooldown 30s
         setResendCooldown(30);
         const timer = setInterval(() => {
-          setResendCooldown(c => { if (c <= 1) { clearInterval(timer); return 0; } return c - 1; });
+          setResendCooldown((c) => {
+            if (c <= 1) {
+              clearInterval(timer);
+              return 0;
+            }
+            return c - 1;
+          });
         }, 1000);
-      } else throw new Error(res.data?.message || 'OTP initiation failed');
+      } else {
+        throw new Error(data?.message || 'OTP initiation failed');
+      }
     } catch (err) {
       setOtpError(err.response?.data?.message || err.message || 'Failed to send OTP');
-    } finally { setOtpLoading(false); }
+    } finally {
+      setOtpLoading(false);
+    }
   };
 
   // Aadhaar OTP verify
   const handleVerifyOtp = async () => {
     setOtpError('');
-    if (formData.otp.length !== 6) { setOtpError('Enter the 6-digit OTP'); return; }
+    const cleanOtp = (formData.otp || '').trim();
+    if (cleanOtp.length !== 6) {
+      setOtpError('Please enter the 6-digit OTP');
+      return;
+    }
     try {
       setOtpLoading(true);
-      const res = await verifyAadhaarOtpApi({ txnId, otp: formData.otp.trim() });
-      if (res.data?.success) {
+      const res = await verifyAadhaarOtpApi({ txnId, otp: cleanOtp });
+      const data = res?.data || res;
+      if (data?.success) {
         setOtpStep('VERIFIED');
-        setVerificationToken(res.data.verificationToken);
-        setVerifiedCustomerId(res.data.customerId);
-        setMaskedAadhaar(res.data.maskedAadhaar);
+        setVerificationToken(data.verificationToken);
+        setVerifiedCustomerId(data.customerId);
+        setMaskedAadhaar(data.maskedAadhaar);
         setOtpMessage('✓ Aadhaar identity verified successfully!');
-      } else throw new Error(res.data?.message || 'Invalid OTP');
+      } else {
+        throw new Error(data?.message || 'Invalid OTP');
+      }
     } catch (err) {
       setOtpError(err.response?.data?.message || err.message || 'OTP verification failed');
-    } finally { setOtpLoading(false); }
+    } finally {
+      setOtpLoading(false);
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -139,9 +231,13 @@ export const RegisterPage = () => {
     setError('');
 
     if (role === 'CUSTOMER') {
-      if (otpStep !== 'VERIFIED') { setError('Aadhaar verification required'); return; }
+      if (otpStep !== 'VERIFIED') {
+        setError('Aadhaar verification is required');
+        return;
+      }
       if (!formData.addressLine1.trim() || !formData.city.trim() || !formData.pincode.match(/^\d{6}$/)) {
-        setError('Please complete all required address fields'); return;
+        setError('Please complete all required address fields (including 6-digit PIN code)');
+        return;
       }
     }
 
@@ -182,39 +278,10 @@ export const RegisterPage = () => {
       navigate(role === 'FARMER' ? '/farmer' : '/marketplace');
     } catch (err) {
       setError(err.message || 'Registration failed. Please check your information.');
-    } finally { setLoading(false); }
+    } finally {
+      setLoading(false);
+    }
   };
-
-  // ── UI Helpers ──
-  const StepDot = ({ n }) => (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
-      <div style={{
-        width: 32, height: 32, borderRadius: '50%', display: 'flex', alignItems: 'center',
-        justifyContent: 'center', fontWeight: 700, fontSize: '0.85rem',
-        background: n < step ? 'var(--primary-600)' : n === step ? 'var(--primary-700)' : 'var(--slate-200)',
-        color: n <= step ? '#fff' : 'var(--slate-500)',
-        boxShadow: n === step ? '0 0 0 3px var(--primary-100)' : 'none',
-        transition: 'all 0.2s',
-      }}>
-        {n < step ? <CheckCircle2 size={16} /> : n}
-      </div>
-      <span style={{ fontSize: '0.65rem', color: n === step ? 'var(--primary-700)' : 'var(--slate-500)', fontWeight: n === step ? 700 : 400, whiteSpace: 'nowrap' }}>
-        {steps[n - 1]}
-      </span>
-    </div>
-  );
-
-  const InputField = ({ label, name, type = 'text', placeholder, required, value, onChange, disabled, extra }) => (
-    <div className="input-group">
-      <label className="input-label">{label}{required && <span style={{ color: '#dc2626' }}> *</span>}</label>
-      <input
-        type={type} name={name} required={required}
-        placeholder={placeholder} value={value}
-        onChange={onChange || handleChange} disabled={disabled}
-        className="input-field" {...extra}
-      />
-    </div>
-  );
 
   return (
     <div style={{ backgroundColor: '#f0fdf4', minHeight: '100vh', display: 'flex', alignItems: 'center', padding: '2rem 0' }}>
@@ -244,7 +311,10 @@ export const RegisterPage = () => {
             marginBottom: '1.75rem',
           }}>
             {['CUSTOMER', 'FARMER'].map(r => (
-              <button key={r} type="button" onClick={() => { setRole(r); setStep(1); setError(''); setStepError(''); }}
+              <button
+                key={r}
+                type="button"
+                onClick={() => { setRole(r); setStep(1); setError(''); setStepError(''); }}
                 style={{
                   padding: '0.65rem', borderRadius: '10px', fontWeight: 700, fontSize: '0.9rem',
                   background: role === r ? '#ffffff' : 'transparent',
@@ -261,7 +331,7 @@ export const RegisterPage = () => {
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'center', gap: '0', marginBottom: '2rem' }}>
             {steps.map((_, i) => (
               <React.Fragment key={i}>
-                <StepDot n={i + 1} />
+                <StepDot n={i + 1} step={step} steps={steps} />
                 {i < totalSteps - 1 && (
                   <div style={{
                     flex: 1, height: 2, marginTop: 15,
@@ -292,27 +362,71 @@ export const RegisterPage = () => {
               </h2>
 
               <div className="grid-2">
-                <InputField label="Full Name" name="name" required placeholder="e.g. Ravi Kumar" value={formData.name} />
+                <InputField
+                  label="Full Name"
+                  name="name"
+                  required
+                  placeholder="e.g. Ravi Kumar"
+                  value={formData.name}
+                  onChange={handleChange}
+                />
                 <div className="input-group">
                   <label className="input-label">Mobile Phone <span style={{ color: '#dc2626' }}>*</span></label>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     <span style={{ padding: '0 8px', fontWeight: 600, color: 'var(--slate-600)', fontSize: '0.9rem' }}>+91</span>
-                    <input type="tel" name="phone" required maxLength="10" placeholder="9842167890"
-                      value={formData.phone} onChange={handleChange} className="input-field" style={{ flex: 1 }} />
+                    <input
+                      type="tel"
+                      name="phone"
+                      required
+                      maxLength={10}
+                      inputMode="numeric"
+                      placeholder="9842167890"
+                      value={formData.phone}
+                      onChange={handlePhoneChange}
+                      className="input-field"
+                      style={{ flex: 1 }}
+                    />
                   </div>
                 </div>
               </div>
 
               <div className="grid-2">
-                <InputField label="Email Address" name="email" type="email" required placeholder="ravi@example.com" value={formData.email} />
+                <InputField
+                  label="Email Address"
+                  name="email"
+                  type="email"
+                  required
+                  placeholder="ravi@example.com"
+                  value={formData.email}
+                  onChange={handleChange}
+                />
                 <div className="input-group">
                   <label className="input-label">Password <span style={{ color: '#dc2626' }}>*</span></label>
                   <div style={{ position: 'relative' }}>
-                    <input type={showPassword ? 'text' : 'password'} name="password" required
-                      placeholder="Min 6 characters" value={formData.password}
-                      onChange={handleChange} className="input-field" style={{ paddingRight: '2.5rem' }} />
-                    <button type="button" onClick={() => setShowPassword(!showPassword)}
-                      style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--slate-500)' }}>
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      name="password"
+                      required
+                      placeholder="Min 6 characters"
+                      value={formData.password}
+                      onChange={handleChange}
+                      className="input-field"
+                      style={{ paddingRight: '2.5rem' }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      style={{
+                        position: 'absolute',
+                        right: 10,
+                        top: '50%',
+                        transform: 'translateY(-50%)',
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        color: 'var(--slate-500)',
+                      }}
+                    >
                       {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                     </button>
                   </div>
@@ -322,10 +436,22 @@ export const RegisterPage = () => {
               {role === 'FARMER' && (
                 <>
                   <div className="grid-2">
-                    <InputField label="Village / Town" name="village" required placeholder="e.g. Lalgudi" value={formData.village} />
+                    <InputField
+                      label="Village / Town"
+                      name="village"
+                      required
+                      placeholder="e.g. Lalgudi"
+                      value={formData.village}
+                      onChange={handleChange}
+                    />
                     <div className="input-group">
                       <label className="input-label">District</label>
-                      <select name="farmerDistrict" value={formData.farmerDistrict} onChange={handleChange} className="select-field">
+                      <select
+                        name="farmerDistrict"
+                        value={formData.farmerDistrict}
+                        onChange={handleChange}
+                        className="select-field"
+                      >
                         {['Trichy', 'Madurai', 'Thanjavur', 'Salem', 'Coimbatore', 'Dindigul', 'Erode', 'Tirunelveli'].map(d => (
                           <option key={d} value={d}>{d}</option>
                         ))}
@@ -333,14 +459,32 @@ export const RegisterPage = () => {
                     </div>
                   </div>
                   <div className="grid-2">
-                    <InputField label="Farming Experience (Years)" name="experience" type="number" value={formData.experience} />
-                    <InputField label="Land Holding (Acres)" name="landHolding" type="number" extra={{ step: '0.1' }} value={formData.landHolding} />
+                    <InputField
+                      label="Farming Experience (Years)"
+                      name="experience"
+                      type="number"
+                      value={formData.experience}
+                      onChange={handleChange}
+                    />
+                    <InputField
+                      label="Land Holding (Acres)"
+                      name="landHolding"
+                      type="number"
+                      step="0.1"
+                      value={formData.landHolding}
+                      onChange={handleChange}
+                    />
                   </div>
                   <div className="input-group">
                     <label className="input-label" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                       <Languages size={15} color="var(--primary-600)" /> Preferred Language for Alerts
                     </label>
-                    <select name="preferredLanguage" value={formData.preferredLanguage} onChange={handleChange} className="select-field">
+                    <select
+                      name="preferredLanguage"
+                      value={formData.preferredLanguage}
+                      onChange={handleChange}
+                      className="select-field"
+                    >
                       <option value="ta-IN">🌾 தமிழ் (Tamil)</option>
                       <option value="hi-IN">हिन्दी (Hindi)</option>
                       <option value="te-IN">తెలుగు (Telugu)</option>
@@ -353,35 +497,50 @@ export const RegisterPage = () => {
               )}
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}>
-                <button type="button" onClick={handleNextStep} className="btn btn-primary btn-lg"
-                  style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <button
+                  type="button"
+                  onClick={handleNextStep}
+                  className="btn btn-primary btn-lg"
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                >
                   {role === 'FARMER' ? 'Create Farmer Account' : 'Continue'} <ArrowRight size={18} />
                 </button>
               </div>
 
               {role === 'FARMER' && (
-                <button onClick={async (e) => {
-                  e.preventDefault();
-                  const err = validateStep1();
-                  if (err) { setStepError(err); return; }
-                  setLoading(true); setError('');
-                  try {
-                    await register({
-                      name: formData.name, email: formData.email, phone: formData.phone,
-                      password: formData.password, role: 'FARMER',
-                      preferredLanguage: formData.preferredLanguage,
-                      profileData: {
-                        village: formData.village, district: formData.farmerDistrict,
-                        experience: parseFloat(formData.experience),
-                        landHolding: parseFloat(formData.landHolding),
+                <button
+                  onClick={async (e) => {
+                    e.preventDefault();
+                    const err = validateStep1();
+                    if (err) { setStepError(err); return; }
+                    setLoading(true); setError('');
+                    try {
+                      await register({
+                        name: formData.name,
+                        email: formData.email,
+                        phone: formData.phone,
+                        password: formData.password,
+                        role: 'FARMER',
                         preferredLanguage: formData.preferredLanguage,
-                      },
-                    });
-                    navigate('/farmer');
-                  } catch (err) { setError(err.message || 'Registration failed'); }
-                  finally { setLoading(false); }
-                }} className="btn btn-primary" style={{ width: '100%', marginTop: '0.5rem', padding: '0.75rem' }}
-                  disabled={loading}>
+                        profileData: {
+                          village: formData.village,
+                          district: formData.farmerDistrict,
+                          experience: parseFloat(formData.experience),
+                          landHolding: parseFloat(formData.landHolding),
+                          preferredLanguage: formData.preferredLanguage,
+                        },
+                      });
+                      navigate('/farmer');
+                    } catch (err) {
+                      setError(err.message || 'Registration failed');
+                    } finally {
+                      setLoading(false);
+                    }
+                  }}
+                  className="btn btn-primary"
+                  style={{ width: '100%', marginTop: '0.5rem', padding: '0.75rem' }}
+                  disabled={loading}
+                >
                   {loading ? 'Creating Account...' : '👨‍🌾 Register as Farmer'}
                 </button>
               )}
@@ -417,11 +576,13 @@ export const RegisterPage = () => {
                 <>
                   <div className="input-group">
                     <label className="input-label">
-                      Aadhaar Number <span style={{ color: '#dc2626' }}>*</span>
+                      Aadhaar Number (12 Digits) <span style={{ color: '#dc2626' }}>*</span>
                     </label>
                     <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                       <input
-                        type="text" maxLength="12"
+                        type="text"
+                        maxLength={14}
+                        inputMode="numeric"
                         placeholder="XXXX XXXX XXXX"
                         value={formatAadhaarDisplay(formData.aadhaarNumber)}
                         onChange={handleAadhaarChange}
@@ -430,13 +591,22 @@ export const RegisterPage = () => {
                         style={{ fontFamily: 'monospace', letterSpacing: '4px', fontSize: '1.1rem', textAlign: 'center' }}
                       />
                       {otpStep === 'UNVERIFIED' && (
-                        <button type="button" onClick={handleSendOtp}
-                          disabled={otpLoading || formData.aadhaarNumber.length !== 12}
-                          className="btn btn-primary" style={{ whiteSpace: 'nowrap', padding: '0 1.25rem' }}>
+                        <button
+                          type="button"
+                          onClick={handleSendOtp}
+                          disabled={otpLoading || (formData.aadhaarNumber || '').length !== 12}
+                          className="btn btn-primary"
+                          style={{ whiteSpace: 'nowrap', padding: '0 1.25rem' }}
+                        >
                           {otpLoading ? <RefreshCw size={16} className="spin" /> : <><KeyRound size={15} /> Send OTP</>}
                         </button>
                       )}
                     </div>
+                    {formData.aadhaarNumber && formData.aadhaarNumber.length < 12 && (
+                      <div style={{ fontSize: '0.75rem', color: 'var(--slate-500)', marginTop: '0.25rem' }}>
+                        Entered {formData.aadhaarNumber.length} of 12 digits
+                      </div>
+                    )}
                   </div>
 
                   {otpStep === 'OTP_SENT' && (
@@ -444,8 +614,11 @@ export const RegisterPage = () => {
                       {mockOtp && (
                         <div style={{ background: '#fef3c7', border: '1px solid #f59e0b', borderRadius: '6px', padding: '0.6rem 0.85rem', fontSize: '0.8rem', color: '#92400e', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.85rem' }}>
                           <span>🔧 <strong>Dev Mode</strong> — Test OTP: <strong style={{ letterSpacing: '3px' }}>{mockOtp}</strong></span>
-                          <button type="button" onClick={() => setFormData({ ...formData, otp: mockOtp })}
-                            style={{ background: '#f59e0b', color: '#fff', border: 'none', padding: '3px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 700 }}>
+                          <button
+                            type="button"
+                            onClick={() => setFormData((prev) => ({ ...prev, otp: mockOtp }))}
+                            style={{ background: '#f59e0b', color: '#fff', border: 'none', padding: '3px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 700 }}
+                          >
                             Autofill OTP
                           </button>
                         </div>
@@ -453,43 +626,77 @@ export const RegisterPage = () => {
 
                       <label className="input-label">6-Digit OTP (sent to registered mobile) <span style={{ color: '#dc2626' }}>*</span></label>
                       <div style={{ display: 'flex', gap: '0.5rem' }}>
-                        <input type="text" name="otp" maxLength="6" placeholder="_ _ _ _ _ _"
-                          value={formData.otp} onChange={handleChange}
+                        <input
+                          type="text"
+                          name="otp"
+                          maxLength={6}
+                          inputMode="numeric"
+                          placeholder="_ _ _ _ _ _"
+                          value={formData.otp}
+                          onChange={handleChange}
                           className="input-field"
-                          style={{ fontFamily: 'monospace', letterSpacing: '8px', fontSize: '1.3rem', textAlign: 'center', flex: 1 }} />
-                        <button type="button" onClick={handleVerifyOtp}
-                          disabled={otpLoading || formData.otp.length !== 6}
-                          className="btn btn-primary" style={{ padding: '0 1.5rem' }}>
+                          style={{ fontFamily: 'monospace', letterSpacing: '8px', fontSize: '1.3rem', textAlign: 'center', flex: 1 }}
+                        />
+                        <button
+                          type="button"
+                          onClick={handleVerifyOtp}
+                          disabled={otpLoading || (formData.otp || '').length !== 6}
+                          className="btn btn-primary"
+                          style={{ padding: '0 1.5rem' }}
+                        >
                           {otpLoading ? <RefreshCw size={16} className="spin" /> : 'Verify OTP'}
                         </button>
                       </div>
 
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.75rem' }}>
-                        <button type="button" onClick={() => { setOtpStep('UNVERIFIED'); setFormData({ ...formData, otp: '' }); setMockOtp(''); }}
-                          style={{ background: 'none', border: 'none', color: '#166534', cursor: 'pointer', fontSize: '0.8rem', textDecoration: 'underline' }}>
+                        <button
+                          type="button"
+                          onClick={() => { setOtpStep('UNVERIFIED'); setFormData((prev) => ({ ...prev, otp: '' })); setMockOtp(''); }}
+                          style={{ background: 'none', border: 'none', color: '#166534', cursor: 'pointer', fontSize: '0.8rem', textDecoration: 'underline' }}
+                        >
                           ← Change Aadhaar
                         </button>
-                        <button type="button" onClick={handleSendOtp} disabled={otpLoading || resendCooldown > 0}
-                          style={{ background: 'none', border: 'none', color: resendCooldown > 0 ? '#94a3b8' : '#166534', cursor: resendCooldown > 0 ? 'default' : 'pointer', fontSize: '0.8rem', textDecoration: 'underline' }}>
+                        <button
+                          type="button"
+                          onClick={handleSendOtp}
+                          disabled={otpLoading || resendCooldown > 0}
+                          style={{ background: 'none', border: 'none', color: resendCooldown > 0 ? '#94a3b8' : '#166534', cursor: resendCooldown > 0 ? 'default' : 'pointer', fontSize: '0.8rem', textDecoration: 'underline' }}
+                        >
                           {resendCooldown > 0 ? `Resend OTP (${resendCooldown}s)` : 'Resend OTP'}
                         </button>
                       </div>
                     </div>
                   )}
 
-                  {otpError && <div style={{ color: '#dc2626', fontSize: '0.85rem', marginTop: '0.5rem', display: 'flex', alignItems: 'center', gap: '4px' }}><AlertCircle size={14} />{otpError}</div>}
-                  {otpMessage && !otpError && <div style={{ color: '#15803d', fontSize: '0.85rem', marginTop: '0.5rem' }}>✓ {otpMessage}</div>}
+                  {otpError && (
+                    <div style={{ color: '#dc2626', fontSize: '0.85rem', marginTop: '0.5rem', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <AlertCircle size={14} />{otpError}
+                    </div>
+                  )}
+                  {otpMessage && !otpError && (
+                    <div style={{ color: '#15803d', fontSize: '0.85rem', marginTop: '0.5rem' }}>
+                      ✓ {otpMessage}
+                    </div>
+                  )}
                 </>
               )}
 
               <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '1.5rem' }}>
-                <button type="button" onClick={() => { setStep(1); setStepError(''); }}
-                  className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <button
+                  type="button"
+                  onClick={() => { setStep(1); setStepError(''); }}
+                  className="btn btn-secondary"
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                >
                   <ArrowLeft size={18} /> Back
                 </button>
                 {otpStep === 'VERIFIED' && (
-                  <button type="button" onClick={() => setStep(3)}
-                    className="btn btn-primary btn-lg" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <button
+                    type="button"
+                    onClick={() => setStep(3)}
+                    className="btn btn-primary btn-lg"
+                    style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                  >
                     Continue <ArrowRight size={18} />
                   </button>
                 )}
@@ -510,35 +717,64 @@ export const RegisterPage = () => {
 
               <div className="input-group">
                 <label className="input-label">House / Flat / Door Number & Street <span style={{ color: '#dc2626' }}>*</span></label>
-                <input type="text" name="addressLine1" required className="input-field"
+                <input
+                  type="text"
+                  name="addressLine1"
+                  required
+                  className="input-field"
                   placeholder="e.g. Flat 4B, Emerald Heights, Anna Salai"
-                  value={formData.addressLine1} onChange={handleChange} />
+                  value={formData.addressLine1}
+                  onChange={handleChange}
+                />
               </div>
 
               <div className="input-group">
                 <label className="input-label">Area / Landmark (Optional)</label>
-                <input type="text" name="addressLine2" className="input-field"
+                <input
+                  type="text"
+                  name="addressLine2"
+                  className="input-field"
                   placeholder="e.g. Near Bus Stand, T Nagar"
-                  value={formData.addressLine2} onChange={handleChange} />
+                  value={formData.addressLine2}
+                  onChange={handleChange}
+                />
               </div>
 
               <div className="grid-2">
                 <div className="input-group">
                   <label className="input-label">City <span style={{ color: '#dc2626' }}>*</span></label>
-                  <input type="text" name="city" required className="input-field"
-                    placeholder="e.g. Madurai" value={formData.city} onChange={handleChange} />
+                  <input
+                    type="text"
+                    name="city"
+                    required
+                    className="input-field"
+                    placeholder="e.g. Madurai"
+                    value={formData.city}
+                    onChange={handleChange}
+                  />
                 </div>
                 <div className="input-group">
                   <label className="input-label">District</label>
-                  <input type="text" name="district" className="input-field"
-                    placeholder="e.g. Madurai" value={formData.district} onChange={handleChange} />
+                  <input
+                    type="text"
+                    name="district"
+                    className="input-field"
+                    placeholder="e.g. Madurai"
+                    value={formData.district}
+                    onChange={handleChange}
+                  />
                 </div>
               </div>
 
               <div className="grid-2">
                 <div className="input-group">
                   <label className="input-label">State <span style={{ color: '#dc2626' }}>*</span></label>
-                  <select name="state" value={formData.state} onChange={handleChange} className="select-field">
+                  <select
+                    name="state"
+                    value={formData.state}
+                    onChange={handleChange}
+                    className="select-field"
+                  >
                     {['Tamil Nadu', 'Kerala', 'Karnataka', 'Andhra Pradesh', 'Telangana', 'Maharashtra', 'Gujarat', 'Rajasthan', 'Delhi', 'Other'].map(s => (
                       <option key={s} value={s}>{s}</option>
                     ))}
@@ -546,10 +782,18 @@ export const RegisterPage = () => {
                 </div>
                 <div className="input-group">
                   <label className="input-label">PIN Code <span style={{ color: '#dc2626' }}>*</span></label>
-                  <input type="text" name="pincode" required className="input-field"
-                    maxLength="6" placeholder="e.g. 625020"
-                    value={formData.pincode} onChange={handleChange}
-                    style={{ fontFamily: 'monospace', letterSpacing: '2px' }} />
+                  <input
+                    type="text"
+                    name="pincode"
+                    required
+                    maxLength={6}
+                    inputMode="numeric"
+                    placeholder="e.g. 625020"
+                    value={formData.pincode}
+                    onChange={handleChange}
+                    style={{ fontFamily: 'monospace', letterSpacing: '2px' }}
+                    className="input-field"
+                  />
                 </div>
               </div>
 
@@ -559,12 +803,20 @@ export const RegisterPage = () => {
               </div>
 
               <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '1.5rem' }}>
-                <button type="button" onClick={() => setStep(2)}
-                  className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <button
+                  type="button"
+                  onClick={() => setStep(2)}
+                  className="btn btn-secondary"
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                >
                   <ArrowLeft size={18} /> Back
                 </button>
-                <button type="submit" disabled={loading} className="btn btn-primary btn-lg"
-                  style={{ minWidth: '200px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="btn btn-primary btn-lg"
+                  style={{ minWidth: '200px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}
+                >
                   {loading ? <><RefreshCw size={16} className="spin" /> Creating Account...</> : '🎉 Create Customer Account'}
                 </button>
               </div>

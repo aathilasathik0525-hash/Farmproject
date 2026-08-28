@@ -24,7 +24,7 @@ setInterval(() => {
 function validateAadhaarFormat(aadhaarNumber) {
   if (!aadhaarNumber) return false;
   const cleaned = String(aadhaarNumber).replace(/[\s-]/g, '');
-  return /^[2-9]{1}[0-9]{11}$/.test(cleaned);
+  return /^\d{12}$/.test(cleaned);
 }
 
 /**
