@@ -1,0 +1,484 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  phone         String    @unique
+  passwordHash  String
+  role          String    @default("FARMER") // FARMER, BUYER, FPO, LOGISTICS, ADMIN
+  name          String
+  preferredLanguage String  @default("ta-IN") // ta-IN, hi-IN, te-IN, kn-IN, ml-IN, mr-IN, bn-IN, en-IN
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  isActive      Boolean   @default(true)
+
+  farmerProfile   FarmerProfile?
+  buyerProfile    BuyerProfile?
+  fpoProfile      FPOProfile?
+  logisticsProfile LogisticsProfile?
+  notifications   Notification[]
+  sentNotifications Notification[] @relation("NotificationSender")
+}
+
+model FarmerProfile {
+  id                String             @id @default(uuid())
+  userId            String             @unique
+  user              User               @relation(fields: [userId], references: [id])
+  farmName          String?
+  village           String
+  district          String
+  state             String             @default("Tamil Nadu")
+  pincode           String?
+  gpsLat            Float?
+  gpsLng            Float?
+  experience        Int?               // years
+  landHolding       Float?             // acres
+  verificationStatus String            @default("PENDING") // PENDING, VERIFIED, REJECTED
+  verifiedBy        String?
+  verifiedAt        DateTime?
+  bio               String?
+  profileImage      String?
+  preferredLanguage String             @default("ta-IN") // ta-IN, hi-IN, te-IN, kn-IN, ml-IN, mr-IN, bn-IN, en-IN
+  fpoId             String?
+  fpo               FPO?               @relation(fields: [fpoId], references: [id])
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  products          Product[]
+  farmerEarnings    FarmerEarning[]
+  aggregationItems  AggregationItem[]
+}
+
+model BuyerProfile {
+  id            String    @id @default(uuid())
+  userId        String    @unique
+  user          User      @relation(fields: [userId], references: [id])
+  companyName   String?
+  buyerType     String    @default("INDIVIDUAL") // INDIVIDUAL, BUSINESS, EXPORTER
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  verification  CustomerVerification?
+  orders        Order[]
+  addresses     DeliveryAddress[]
+  reviews       Review[]
+  purchaseHistories AddressPurchaseHistory[]
+  riskEvents    RiskEvent[]
+}
+
+model CustomerVerification {
+  id                String       @id @default(uuid())
+  buyerId           String       @unique
+  buyer             BuyerProfile @relation(fields: [buyerId], references: [id], onDelete: Cascade)
+  customerId        String       @unique // e.g. CUST-984210
+  verificationStatus String      @default("VERIFIED") // PENDING, VERIFIED, REJECTED
+  aadhaarHash       String       @unique // Irreversible HMAC-SHA256 (Never raw Aadhaar)
+  maskedAadhaar     String       // e.g. "XXXX-XXXX-1234"
+  verifiedMobile    String
+  idProofType       String       @default("AADHAAR")
+  verifiedAt        DateTime     @default(now())
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+}
+
+model FPOProfile {
+  id            String    @id @default(uuid())
+  userId        String    @unique
+  user          User      @relation(fields: [userId], references: [id])
+  fpoId         String
+  fpo           FPO       @relation(fields: [fpoId], references: [id])
+  designation   String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+model LogisticsProfile {
+  id            String    @id @default(uuid())
+  userId        String    @unique
+  user          User      @relation(fields: [userId], references: [id])
+  companyName   String?
+  licenseNumber String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  vehicles      Vehicle[]
+  shipments     Shipment[]
+}
+
+model FPO {
+  id                String    @id @default(uuid())
+  name              String
+  registrationNumber String?  @unique
+  district          String
+  state             String    @default("Tamil Nadu")
+  contactPhone      String
+  contactEmail      String?
+  address           String?
+  gpsLat            Float?
+  gpsLng            Float?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  farmers           FarmerProfile[]
+  fpoProfiles       FPOProfile[]
+  collectionCenters CollectionCenter[]
+  aggregations      Aggregation[]
+}
+
+model ProductCategory {
+  id        String    @id @default(uuid())
+  name      String    @unique
+  slug      String    @unique
+  icon      String?
+  createdAt DateTime  @default(now())
+
+  products  Product[]
+}
+
+model Product {
+  id            String    @id @default(uuid())
+  farmerId      String
+  farmer        FarmerProfile @relation(fields: [farmerId], references: [id])
+  categoryId    String
+  category      ProductCategory @relation(fields: [categoryId], references: [id])
+  name          String
+  description   String?   @db.Text
+  unit          String        // kg, quintal, tonne, piece, dozen
+  farmerPrice   Float         // Price set by farmer (base price)
+  qualityGrade  String        @default("A") // A, B, C, Premium
+  isOrganic     Boolean       @default(false)
+  harvestDate   DateTime?
+  images        String?   @db.Text // JSON array of image URLs (stored as JSON string)
+  isActive      Boolean       @default(true)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  inventory     Inventory?
+  orderItems    OrderItem[]
+  reviews       Review[]
+}
+
+model Inventory {
+  id              String    @id @default(uuid())
+  productId       String    @unique
+  product         Product   @relation(fields: [productId], references: [id])
+  availableQty    Float
+  reservedQty     Float     @default(0)
+  updatedAt       DateTime  @updatedAt
+}
+
+model DeliveryAddress {
+  id                  String             @id @default(uuid())
+  buyerId             String
+  buyer               BuyerProfile       @relation(fields: [buyerId], references: [id])
+  addressFingerprintId String?
+  addressFingerprint  AddressFingerprint? @relation(fields: [addressFingerprintId], references: [id])
+  label               String?   // Home, Office, etc.
+  addressLine1        String
+  addressLine2        String?
+  city                String
+  district            String
+  state               String
+  pincode             String
+  gpsLat              Float?
+  gpsLng              Float?
+  isDefault           Boolean   @default(false)
+  createdAt           DateTime  @default(now())
+
+  orders              Order[]
+}
+
+model AddressFingerprint {
+  id                  String                    @id @default(uuid())
+  fingerprint         String                    @unique // Cryptographic SHA256 of normalized address
+  normalizedAddress   String                    @db.VarChar(500)
+  unitOrFlat          String?
+  street              String?
+  city                String
+  district            String?
+  state               String
+  pincode             String
+  riskStatus          String                    @default("NORMAL") // NORMAL, WATCH, RESTRICTED, ADMIN_REVIEW
+  riskScore           Float                     @default(0)
+  isSuspended         Boolean                   @default(false)
+  adminNotes          String?                   @db.Text
+  lastEvaluatedAt     DateTime                  @default(now())
+  createdAt           DateTime                  @default(now())
+  updatedAt           DateTime                  @updatedAt
+
+  addresses           DeliveryAddress[]
+  purchaseHistories   AddressPurchaseHistory[]
+  riskEvents          RiskEvent[]
+  adminReviews        AdminReview[]
+}
+
+model AddressPurchaseHistory {
+  id                  String             @id @default(uuid())
+  addressFingerprintId String
+  addressFingerprint  AddressFingerprint @relation(fields: [addressFingerprintId], references: [id])
+  buyerId             String
+  buyer               BuyerProfile       @relation(fields: [buyerId], references: [id])
+  customerId          String
+  orderId             String
+  productId           String
+  categoryId          String?
+  quantity            Float
+  unit                String             @default("kg")
+  orderStatus         String             @default("PENDING")
+  orderDate           DateTime           @default(now())
+  monthKey            String             // Format: "YYYY-MM" (e.g. "2026-08")
+  isCancelled         Boolean            @default(false)
+  createdAt           DateTime           @default(now())
+}
+
+model PurchaseQuotaPolicy {
+  id                        String    @id @default(uuid())
+  name                      String    @default("Default Consumer Policy")
+  firstOrderLimitKg         Float     @default(5.0)
+  subsequentOrderLimitKg    Float     @default(1.0)
+  customerMonthlyMaxKg      Float     @default(10.0)
+  addressMonthlyMaxKg       Float     @default(10.0)
+  shortIntervalHours        Int       @default(48)
+  riskNormalThreshold       Float     @default(30.0)
+  riskWatchThreshold        Float     @default(60.0)
+  riskRestrictedThreshold   Float     @default(80.0)
+  categoryLimitsJson        String?   @db.Text // JSON string for category-specific quotas
+  isActive                  Boolean   @default(true)
+  createdAt                 DateTime  @default(now())
+  updatedAt                 DateTime  @updatedAt
+}
+
+model RiskEvent {
+  id                  String              @id @default(uuid())
+  addressFingerprintId String?
+  addressFingerprint  AddressFingerprint? @relation(fields: [addressFingerprintId], references: [id])
+  buyerId             String?
+  buyer               BuyerProfile?       @relation(fields: [buyerId], references: [id])
+  customerId          String?
+  orderId             String?
+  eventType           String              // MULTIPLE_ACCOUNTS_SAME_ADDRESS, SHORT_INTERVAL_ORDER, QUOTA_EXHAUSTED, HIGH_QUANTITY, SUSPICIOUS_PATTERN, ADMIN_ACTION
+  scoreChange         Float
+  details             String?             @db.Text
+  createdAt           DateTime            @default(now())
+}
+
+model AdminReview {
+  id                  String             @id @default(uuid())
+  addressFingerprintId String
+  addressFingerprint  AddressFingerprint @relation(fields: [addressFingerprintId], references: [id])
+  adminUserId         String
+  action              String             // APPROVE, RESTRICT, SUSPEND, RESET_QUOTA, ADD_NOTE
+  note                String             @db.Text
+  previousStatus      String
+  newStatus           String
+  createdAt           DateTime           @default(now())
+}
+
+model Order {
+  id              String      @id @default(uuid())
+  orderNumber     String      @unique
+  buyerId         String
+  buyer           BuyerProfile @relation(fields: [buyerId], references: [id])
+  deliveryAddressId String?
+  deliveryAddress DeliveryAddress? @relation(fields: [deliveryAddressId], references: [id])
+  status          String      @default("PENDING_FARMER_CONFIRMATION") // PENDING_FARMER_CONFIRMATION, FARMER_CONFIRMED, FARMER_REJECTED, FPO_ASSIGNED, COLLECTION_SCHEDULED, COLLECTED, PACKED, IN_TRANSIT, OUT_FOR_DELIVERY, DELIVERED, CANCELLED
+  totalFarmerAmount Float     // Sum of farmer prices
+  totalCharges    Float       // Collection + Packaging + Transport + Platform
+  totalAmount     Float       // Final amount paid by buyer
+  notes           String?     @db.Text
+  placedAt        DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  expectedDelivery DateTime?
+
+  items           OrderItem[]
+  payment         Payment?
+  shipment        Shipment?
+  aggregation     Aggregation?
+  statusHistory   OrderStatusHistory[]
+  notifications   Notification[]
+}
+
+model OrderItem {
+  id            String    @id @default(uuid())
+  orderId       String
+  order         Order     @relation(fields: [orderId], references: [id])
+  productId     String
+  product       Product   @relation(fields: [productId], references: [id])
+  quantity      Float
+  unit          String
+  farmerPrice   Float     // Price at time of order
+  collectionCharge Float  @default(1)
+  packagingCharge Float   @default(2)
+  transportCharge Float   @default(5)
+  platformFee   Float     @default(1)
+  customerPrice Float     // farmerPrice + all charges
+  totalFarmerAmount Float
+  totalCustomerAmount Float
+  createdAt     DateTime  @default(now())
+
+  farmerEarning FarmerEarning?
+}
+
+model OrderStatusHistory {
+  id        String      @id @default(uuid())
+  orderId   String
+  order     Order       @relation(fields: [orderId], references: [id])
+  status    String
+  note      String?     @db.Text
+  updatedBy String?
+  createdAt DateTime    @default(now())
+}
+
+model Payment {
+  id              String        @id @default(uuid())
+  orderId         String        @unique
+  order           Order         @relation(fields: [orderId], references: [id])
+  amount          Float
+  currency        String        @default("INR")
+  status          String        @default("PENDING") // PENDING, PAID, FAILED, REFUNDED
+  provider        String        @default("mock") // mock, razorpay
+  providerOrderId String?
+  providerPaymentId String?
+  providerSignature String?
+  paidAt          DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+}
+
+model FarmerEarning {
+  id            String    @id @default(uuid())
+  farmerId      String
+  farmer        FarmerProfile @relation(fields: [farmerId], references: [id])
+  orderItemId   String    @unique
+  orderItem     OrderItem @relation(fields: [orderItemId], references: [id])
+  amount        Float
+  status        String    @default("PENDING") // PENDING, PAID
+  paidAt        DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+model Aggregation {
+  id            String    @id @default(uuid())
+  orderId       String    @unique
+  order         Order     @relation(fields: [orderId], references: [id])
+  fpoId         String
+  fpo           FPO       @relation(fields: [fpoId], references: [id])
+  collectionCenterId String?
+  collectionCenter CollectionCenter? @relation(fields: [collectionCenterId], references: [id])
+  scheduledDate DateTime?
+  collectedAt   DateTime?
+  status        String    @default("PENDING") // PENDING, IN_PROGRESS, COMPLETED
+  notes         String?   @db.Text
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  items         AggregationItem[]
+}
+
+model AggregationItem {
+  id            String    @id @default(uuid())
+  aggregationId String
+  aggregation   Aggregation @relation(fields: [aggregationId], references: [id])
+  farmerId      String
+  farmer        FarmerProfile @relation(fields: [farmerId], references: [id])
+  productName   String
+  assignedQty   Float
+  unit          String
+  confirmedQty  Float?
+  createdAt     DateTime  @default(now())
+}
+
+model CollectionCenter {
+  id        String    @id @default(uuid())
+  fpoId     String
+  fpo       FPO       @relation(fields: [fpoId], references: [id])
+  name      String
+  address   String
+  district  String
+  state     String    @default("Tamil Nadu")
+  gpsLat    Float?
+  gpsLng    Float?
+  capacity  Float?    // in tonnes
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+
+  aggregations Aggregation[]
+  shipments    Shipment[]
+}
+
+model Vehicle {
+  id            String    @id @default(uuid())
+  logisticsId   String
+  logistics     LogisticsProfile @relation(fields: [logisticsId], references: [id])
+  registrationNumber String @unique
+  type          String    // TRUCK, MINI_TRUCK, TEMPO, VAN
+  capacityTonnes Float
+  driverName    String
+  driverPhone   String
+  isAvailable   Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+
+  shipments     Shipment[]
+}
+
+model Shipment {
+  id              String        @id @default(uuid())
+  shipmentNumber  String        @unique
+  orderId         String        @unique
+  order           Order         @relation(fields: [orderId], references: [id])
+  logisticsId     String?
+  logistics       LogisticsProfile? @relation(fields: [logisticsId], references: [id])
+  vehicleId       String?
+  vehicle         Vehicle?      @relation(fields: [vehicleId], references: [id])
+  collectionCenterId String?
+  collectionCenter CollectionCenter? @relation(fields: [collectionCenterId], references: [id])
+  originAddress   String
+  destinationAddress String
+  status          String        @default("PENDING") // PENDING, PICKUP_ASSIGNED, PICKED_UP, AT_COLLECTION_CENTER, PACKED, IN_TRANSIT, OUT_FOR_DELIVERY, DELIVERED
+  weight          Float?
+  pickedUpAt      DateTime?
+  deliveredAt     DateTime?
+  notes           String?       @db.Text
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+}
+
+model Notification {
+  id          String              @id @default(uuid())
+  userId      String
+  user        User                @relation(fields: [userId], references: [id])
+  senderId    String?
+  sender      User?               @relation("NotificationSender", fields: [senderId], references: [id])
+  orderId     String?
+  order       Order?              @relation(fields: [orderId], references: [id])
+  channel     String              // IN_APP, SMS, VOICE, FPO
+  status      String              @default("PENDING") // PENDING, SENT, FAILED, READ
+  title       String
+  message     String              @db.Text
+  messageTamil String?            @db.Text
+  language    String              @default("ta-IN")
+  isRead      Boolean             @default(false)
+  sentAt      DateTime?
+  readAt      DateTime?
+  metadata    String?             @db.Text // JSON string for extra data
+  createdAt   DateTime            @default(now())
+}
+
+model Review {
+  id          String    @id @default(uuid())
+  productId   String
+  product     Product   @relation(fields: [productId], references: [id])
+  buyerId     String
+  buyer       BuyerProfile @relation(fields: [buyerId], references: [id])
+  rating      Int       // 1-5
+  comment     String?   @db.Text
+  createdAt   DateTime  @default(now())
+}

@@ -1,0 +1,17 @@
+{
+  "name": "farmdirect",
+  "version": "1.0.0",
+  "description": "Direct Farmer-to-Buyer Marketplace & Supply-Chain Platform (SIH26033)",
+  "private": true,
+  "scripts": {
+    "dev:backend": "cd backend && npm run dev",
+    "dev:frontend": "cd frontend && npm run dev",
+    "db:push": "cd backend && npx prisma db push",
+    "db:seed": "cd backend && node prisma/seed.js",
+    "db:studio": "cd backend && npx prisma studio",
+    "build": "cd frontend && npm run build"
+  },
+  "keywords": ["agriculture", "marketplace", "supply-chain", "sih2024", "fpo"],
+  "author": "FarmDirect Team",
+  "license": "ISC"
+}
